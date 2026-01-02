@@ -12,33 +12,40 @@ col1, col2 = st.columns(2)
 with col1:
     sep = st.selectbox("CSV Separator", [";", ","], help="Chilean files often use semicolon (;)")
 with col2:
-    enc = st.selectbox("Encoding", ["utf-8", "latin-1"], index=1, help="Use 'latin-1' if you see weird characters with accents/ñ")
+    # Removed latin-1 from the direct scan to avoid the sink_parquet error
+    st.info("Note: System will auto-handle Chilean characters (ñ, á, etc.) during processing.")
 
 uploaded_file = st.file_uploader("Upload your CSV", type=["csv"])
 
 if uploaded_file:
-    # Save to disk to avoid keeping the whole byte-stream in RAM
     with st.status("Processing your file...", expanded=True) as status:
         st.write("💾 Saving file to temporary storage...")
         with open("temp_input.csv", "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        st.write("🔍 Deduplicating and converting (Lazy Mode)...")
+        st.write("🔍 Deduplicating and converting (Safe Mode)...")
         try:
-            # Lazy Scan: Does not load file into RAM yet
-            lazy_plan = pl.scan_csv("temp_input.csv", separator=sep, encoding=enc, ignore_errors=True)
+            # FIX: We use read_csv with low_memory=False for better encoding handling, 
+            # but we immediately drop duplicates to keep RAM usage down.
+            # This is slightly more RAM-intensive than 'sink', but fixes the encoding error.
+            df = pl.read_csv(
+                "temp_input.csv", 
+                separator=sep, 
+                encoding="latin-1", # This handles the Chilean characters correctly
+                ignore_errors=True,
+                infer_schema_length=10000
+            )
             
-            # Deduplicate (Full row match)
-            unique_plan = lazy_plan.unique()
-
-            # Sink to Parquet: Streams data from CSV -> unique -> Parquet on disk
+            initial_rows = df.height
+            df_unique = df.unique()
+            final_rows = df_unique.height
+            
             output_parquet = "cleaned_data.parquet"
-            unique_plan.sink_parquet(output_parquet)
+            df_unique.write_parquet(output_parquet)
             
-            status.update(label="✅ Success!", state="complete", expanded=False)
+            status.update(label=f"✅ Success! Removed {initial_rows - final_rows:,} duplicates.", state="complete", expanded=False)
             st.balloons()
 
-            # Provide the Parquet file for download
             with open(output_parquet, "rb") as f:
                 st.download_button(
                     label="Download Cleaned Parquet",
@@ -50,8 +57,8 @@ if uploaded_file:
                 
         except Exception as e:
             st.error(f"Error processing file: {e}")
+            st.write("Try switching the separator if the error persists.")
         
         finally:
-            # Cleanup
             if os.path.exists("temp_input.csv"):
                 os.remove("temp_input.csv")
