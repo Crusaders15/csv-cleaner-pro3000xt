@@ -7,49 +7,55 @@ st.set_page_config(page_title="Deduplicator Pro", page_icon="🇨🇱")
 st.title("🇨🇱 CSV Cleaner & Parquet Converter")
 st.markdown("### Optimized for large files (up to 3GB)")
 
-# Options for Chilean CSV formats
 col1, col2 = st.columns(2)
 with col1:
     sep = st.selectbox("CSV Separator", [";", ","], help="Chilean files often use semicolon (;)")
 with col2:
-    st.info("Note: System auto-handles Chilean characters (ñ, á, etc.) during processing.")
+    st.info("Note: System handles Chilean characters and 'NA' values automatically.")
 
 uploaded_file = st.file_uploader("Upload your CSV", type=["csv"])
 
 if uploaded_file:
-    # 1. PEAK AT HEADERS: We save the file first to read the header efficiently
+    # 1. Save and Peek
     with open("temp_input.csv", "wb") as f:
         f.write(uploaded_file.getbuffer())
     
     try:
-        # Get column names without loading the whole file
-        all_columns = pl.read_csv("temp_input.csv", separator=sep, encoding="latin-1", n_rows=0).columns
+        # Get headers efficiently
+        all_columns = pl.read_csv(
+            "temp_input.csv", 
+            separator=sep, 
+            encoding="latin-1", 
+            n_rows=0,
+            truncate_ragged_lines=True
+        ).columns
         
         st.markdown("---")
         st.subheader("🎯 Column Selection")
+        # Multiselect acting as a search bar
         selected_columns = st.multiselect(
-            "Which columns do you want to keep?", 
+            "Search and select columns to keep:", 
             options=all_columns, 
-            default=all_columns,
-            help="Removing unnecessary columns will make your Parquet file much smaller!"
+            default=all_columns
         )
 
         if not selected_columns:
-            st.warning("Please select at least one column to proceed.")
+            st.warning("Select at least one column.")
             st.stop()
 
         if st.button("🚀 Process and Clean Data", use_container_width=True):
             with st.status("Processing your file...", expanded=True) as status:
-                st.write("🔍 Loading selected columns and deduplicating...")
+                st.write("🔍 Filtering columns and removing duplicates...")
                 
-                # 2. FULL PROCESS: Read ONLY the selected columns to save RAM
+                # 2. FULL PROCESS with Fix for 'NA' error
                 df = pl.read_csv(
                     "temp_input.csv", 
                     separator=sep, 
                     encoding="latin-1", 
-                    columns=selected_columns, # <--- This is the magic part
+                    columns=selected_columns,
                     ignore_errors=True,
-                    infer_schema_length=10000
+                    null_values=["NA", "N/A", "null"], # FIX: Handles the 'NA' parsing error
+                    infer_schema_length=10000 
                 )
                 
                 initial_rows = df.height
@@ -62,11 +68,10 @@ if uploaded_file:
                 status.update(label=f"✅ Success! Removed {initial_rows - final_rows:,} duplicates.", state="complete", expanded=False)
                 st.balloons()
 
-                # Preview Section
+                # Preview
                 st.markdown("---")
                 st.markdown("### 👀 Data Preview (Cleaned)")
                 st.dataframe(df_unique.head(10).to_pandas(), use_container_width=True)
-                st.markdown("---")
 
                 with open(output_parquet, "rb") as f:
                     st.download_button(
@@ -78,9 +83,9 @@ if uploaded_file:
                     )
                     
     except Exception as e:
-        st.error(f"Error processing file: {e}")
+        st.error(f"Error: {e}")
+        st.info("Tip: If you see a parsing error, try increasing 'infer_schema_length'.")
     
     finally:
-        # Cleanup temp file if it exists
         if os.path.exists("temp_input.csv"):
             os.remove("temp_input.csv")
