@@ -2,48 +2,56 @@ import streamlit as st
 import polars as pl
 import os
 
-st.set_page_config(page_title="Deduplicator Pro3000xt", layout="wide")
+st.set_page_config(page_title="Deduplicator Pro", page_icon="🇨🇱")
 
 st.title("🇨🇱 CSV Cleaner & Parquet Converter")
-st.write("Upload a huge CSV to remove duplicates and convert to Parquet.")
+st.markdown("### Optimized for large files (up to 3GB)")
 
-uploaded_file = st.file_uploader("Drop your CSV here", type=["csv"])
+# Options for Chilean CSV formats
+col1, col2 = st.columns(2)
+with col1:
+    sep = st.selectbox("CSV Separator", [";", ","], help="Chilean files often use semicolon (;)")
+with col2:
+    enc = st.selectbox("Encoding", ["utf-8", "latin-1"], index=1, help="Use 'latin-1' if you see weird characters with accents/ñ")
+
+uploaded_file = st.file_uploader("Upload your CSV", type=["csv"])
 
 if uploaded_file:
-    # 1. Save uploaded file temporarily to disk to save RAM
-    with open("temp_input.csv", "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    # Save to disk to avoid keeping the whole byte-stream in RAM
+    with st.status("Processing your file...", expanded=True) as status:
+        st.write("💾 Saving file to temporary storage...")
+        with open("temp_input.csv", "wb") as f:
+            f.write(uploaded_file.getbuffer())
 
-    st.info("Step 1: Converting to Parquet & Deduplicating...")
-
-    try:
-        # We use scan_csv (Lazy loading) to handle files larger than RAM
-        # Chilean CSVs often use ';' as a separator and 'latin-1' encoding
-        lazy_df = pl.scan_csv("temp_input.csv", separator=";", encoding="latin-1", ignore_errors=True)
-        
-        # Perform deduplication (unique) while still in 'lazy' mode
-        # This only calculates the plan, doesn't execute yet
-        cleaned_df = lazy_df.unique()
-
-        # 2. Execute and Save to Parquet
-        output_parquet = "cleaned_data.parquet"
-        cleaned_df.sink_parquet(output_parquet) # 'sink' is memory efficient for big data
-        
-        st.success("✅ Process Complete!")
-
-        # 3. Download Buttons
-        with open(output_parquet, "rb") as f:
-            st.download_button(
-                label="Download Cleaned Parquet (Small & Fast)",
-                data=f,
-                file_name="cleaned_data.parquet",
-                mime="application/octet-stream"
-            )
+        st.write("🔍 Deduplicating and converting (Lazy Mode)...")
+        try:
+            # Lazy Scan: Does not load file into RAM yet
+            lazy_plan = pl.scan_csv("temp_input.csv", separator=sep, encoding=enc, ignore_errors=True)
             
-    except Exception as e:
-        st.error(f"Error: {e}. Try changing the separator to a comma if it failed.")
-    
-    finally:
-        # Cleanup temp files
-        if os.path.exists("temp_input.csv"):
-            os.remove("temp_input.csv")
+            # Deduplicate (Full row match)
+            unique_plan = lazy_plan.unique()
+
+            # Sink to Parquet: Streams data from CSV -> unique -> Parquet on disk
+            output_parquet = "cleaned_data.parquet"
+            unique_plan.sink_parquet(output_parquet)
+            
+            status.update(label="✅ Success!", state="complete", expanded=False)
+            st.balloons()
+
+            # Provide the Parquet file for download
+            with open(output_parquet, "rb") as f:
+                st.download_button(
+                    label="Download Cleaned Parquet",
+                    data=f,
+                    file_name=f"{uploaded_file.name.replace('.csv', '')}_cleaned.parquet",
+                    mime="application/octet-stream",
+                    use_container_width=True
+                )
+                
+        except Exception as e:
+            st.error(f"Error processing file: {e}")
+        
+        finally:
+            # Cleanup
+            if os.path.exists("temp_input.csv"):
+                os.remove("temp_input.csv")
