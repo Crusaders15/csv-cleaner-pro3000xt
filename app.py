@@ -12,7 +12,7 @@ col_set1, col_set2 = st.columns(2)
 with col_set1:
     sep = st.selectbox("CSV Separator", [";", ","], help="Chilean files often use semicolon (;)")
 with col_set2:
-    st.info("Note: System auto-handles Chilean characters and 'NA' values.")
+    st.info("Note: System handles Chilean characters and 'NA' values automatically.")
 
 uploaded_file = st.file_uploader("Upload your CSV", type=["csv"])
 
@@ -34,11 +34,10 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("🎯 Column Selection")
 
-        # Initialize session state for column selection if it doesn't exist
+        # Session state for column selection buttons
         if 'selected_cols' not in st.session_state:
             st.session_state.selected_cols = all_columns
 
-        # Select All / Deselect All Buttons
         btn_col1, btn_col2, _ = st.columns([1, 1, 3])
         if btn_col1.button("✅ Select All"):
             st.session_state.selected_cols = all_columns
@@ -61,15 +60,14 @@ if uploaded_file:
             with st.status("Processing your file...", expanded=True) as status:
                 st.write("🔍 Filtering columns and removing duplicates...")
                 
-                # FULL PROCESS: Reading only selected columns to save RAM
-                # null_values handles the 'NA' error seen previously
+                # FIX: Added null_values and ignore_errors to solve the "NA" parsing error
                 df = pl.read_csv(
                     "temp_input.csv", 
                     separator=sep, 
                     encoding="latin-1", 
                     columns=selected_columns,
                     ignore_errors=True,
-                    null_values=["NA", "N/A", "null", ""], 
+                    null_values=["NA", "N/A", "null", "", " "], 
                     infer_schema_length=10000 
                 )
                 
@@ -101,6 +99,5 @@ if uploaded_file:
         st.error(f"Error: {e}")
     
     finally:
-        # Cleanup temporary file
         if os.path.exists("temp_input.csv"):
             os.remove("temp_input.csv")
